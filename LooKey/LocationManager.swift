@@ -1,59 +1,68 @@
-import Foundation
+//
+//  DeviceLocationService.swift
+//  device-location-ios
+//
+//  Created by Kilo Loco on 12/7/21.
+//
+
+import Combine
 import CoreLocation
 
-class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
-    private let locationManager = CLLocationManager()
+class DeviceLocationService: NSObject, CLLocationManagerDelegate, ObservableObject {
 
-    @Published var location: CLLocationCoordinate2D? = nil
+    var coordinatesPublisher = PassthroughSubject<CLLocationCoordinate2D, Error>()
+    var deniedLocationAccessPublisher = PassthroughSubject<Void, Never>()
 
-    override init() {
+    private override init() {
         super.init()
-        locationManager.delegate = self
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            self.locationManager.requestWhenInUseAuthorization()
-        }
-        locationManager.startUpdatingLocation()
     }
+    static let shared = DeviceLocationService()
 
+    private lazy var locationManager: CLLocationManager = {
+        let manager = CLLocationManager()
+        manager.desiredAccuracy = kCLLocationAccuracyBest
+        manager.delegate = self
+        return manager
+    }()
 
-    // iOS 14+ Method to handle authorization status changes
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        let status = manager.authorizationStatus
-        handleAuthorizationStatus(status)
-    }
-
-    // iOS 13 and earlier
-    func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
-        handleAuthorizationStatus(status)
-    }
-
-    private func handleAuthorizationStatus(_ status: CLAuthorizationStatus) {
-        switch status {
-        case .authorizedWhenInUse, .authorizedAlways:
-            print("Location Authorized - Starting updates")
-            locationManager.startUpdatingLocation()
-        case .denied:
-            print("Location access denied - Show alert to guide user to settings")
-            // Consider showing an alert to guide the user to enable location in Settings
+    func requestLocationUpdates() {
+        switch locationManager.authorizationStatus {
+            
         case .notDetermined:
-            print("Not Determined - Asking for permission")
             locationManager.requestWhenInUseAuthorization()
-        case .restricted:
-            print("Location access restricted")
+            
+        case .authorizedWhenInUse, .authorizedAlways:
+            locationManager.startUpdatingLocation()
+            
+            // Start heading updates if available
+            if CLLocationManager.headingAvailable() {
+                locationManager.startUpdatingHeading()
+            }
+            
         default:
-            break
+            deniedLocationAccessPublisher.send()
+        }
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        switch manager.authorizationStatus {
+            
+        case .authorizedWhenInUse, .authorizedAlways:
+            manager.startUpdatingLocation()
+            
+        default:
+            manager.stopUpdatingLocation()
+            deniedLocationAccessPublisher.send()
         }
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        if let location = locations.last {
-            self.location = location.coordinate
-            print("Got user location: \(location.coordinate.latitude), \(location.coordinate.longitude)")
-        }
+        print(locations)
+        guard let location = locations.last else { return }
+        coordinatesPublisher.send(location.coordinate)
     }
-
+    
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        print("Failed to get user location: \(error.localizedDescription)")
+        coordinatesPublisher.send(completion: .failure(error))
     }
 }
